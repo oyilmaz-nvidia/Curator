@@ -20,6 +20,7 @@ GPU resources based on the test session's requirements.
 
 import os
 import re
+import shutil
 import socket
 import subprocess
 import time
@@ -56,8 +57,8 @@ def gpu_available() -> bool:
 
     # Method 2: Try nvidia-smi with short timeout
     try:
-        result = subprocess.run(  # noqa: S603
-            ["nvidia-smi", "--query-gpu=count", "--format=csv,noheader,nounits"],  # noqa: S607
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=count", "--format=csv,noheader,nounits"],
             capture_output=True,
             text=True,
             timeout=2,
@@ -254,7 +255,7 @@ def shared_ray_cluster(pytestconfig: pytest.Config) -> str:
     deadline = time.time() + 60
     while time.time() < deadline:
         result = subprocess.run(  # noqa: S603
-            ["ray", "status", "--address", ray_address],  # noqa: S607
+            [shutil.which("ray") or "ray", "status", "--address", ray_address],
             capture_output=True,
             check=False,
         )
