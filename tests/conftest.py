@@ -56,7 +56,7 @@ def gpu_available() -> bool:
 
     # Method 2: Try nvidia-smi with short timeout
     try:
-        result = subprocess.run(
+        result = subprocess.run(  # noqa: S603
             ["nvidia-smi", "--query-gpu=count", "--format=csv,noheader,nounits"],  # noqa: S607
             capture_output=True,
             text=True,
@@ -174,27 +174,31 @@ def _build_ray_command(num_cpus: int, num_gpus: int, object_store_memory: int) -
     dashboard_port = find_free_port()
     ray_client_server_port = find_free_port()
 
-    return [
-        "ray",
-        "start",
-        "--head",
-        "--disable-usage-stats",
-        "--port",
-        str(ray_port),
-        "--dashboard-port",
-        str(dashboard_port),
-        "--ray-client-server-port",
-        str(ray_client_server_port),
-        "--dashboard-host",
-        "0.0.0.0",  # noqa: S104
-        "--num-cpus",
-        str(num_cpus),
-        "--num-gpus",
-        str(num_gpus),
-        "--object-store-memory",
-        str(object_store_memory),
-        "--block",
-    ], ray_port, ray_client_server_port
+    return (
+        [
+            "ray",
+            "start",
+            "--head",
+            "--disable-usage-stats",
+            "--port",
+            str(ray_port),
+            "--dashboard-port",
+            str(dashboard_port),
+            "--ray-client-server-port",
+            str(ray_client_server_port),
+            "--dashboard-host",
+            "0.0.0.0",  # noqa: S104
+            "--num-cpus",
+            str(num_cpus),
+            "--num-gpus",
+            str(num_gpus),
+            "--object-store-memory",
+            str(object_store_memory),
+            "--block",
+        ],
+        ray_port,
+        ray_client_server_port,
+    )
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -250,14 +254,16 @@ def shared_ray_cluster(pytestconfig: pytest.Config) -> str:
     deadline = time.time() + 60
     while time.time() < deadline:
         result = subprocess.run(  # noqa: S603
-            ["ray", "status", "--address", ray_address],
+            ["ray", "status", "--address", ray_address],  # noqa: S607
             capture_output=True,
+            check=False,
         )
         if result.returncode == 0:
             break
         time.sleep(1)
     else:
-        raise RuntimeError(f"Ray cluster at {ray_address} did not become ready within 60 seconds")
+        msg = f"Ray cluster at {ray_address} did not become ready within 60 seconds"
+        raise RuntimeError(msg)
 
     try:
         yield ray_client_address
