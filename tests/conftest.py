@@ -56,20 +56,22 @@ def gpu_available() -> bool:
         pass
 
     # Method 2: Try nvidia-smi with short timeout
-    try:
-        result = subprocess.run(
-            ["nvidia-smi", "--query-gpu=count", "--format=csv,noheader,nounits"],
-            capture_output=True,
-            text=True,
-            timeout=2,
-            check=False,
-        )
-        if result.returncode == 0 and result.stdout.strip().isdigit():
-            gpu_count = int(result.stdout.strip())
-            logger.info(f"Detected {gpu_count} GPU(s) via nvidia-smi")
-            return gpu_count > 0
-    except (subprocess.TimeoutExpired, FileNotFoundError, ValueError):
-        pass
+    nvidia_smi = shutil.which("nvidia-smi")
+    if nvidia_smi is not None:
+        try:
+            result = subprocess.run(  # noqa: S603
+                [nvidia_smi, "--query-gpu=count", "--format=csv,noheader,nounits"],
+                capture_output=True,
+                text=True,
+                timeout=2,
+                check=False,
+            )
+            if result.returncode == 0 and result.stdout.strip().isdigit():
+                gpu_count = int(result.stdout.strip())
+                logger.info(f"Detected {gpu_count} GPU(s) via nvidia-smi")
+                return gpu_count > 0
+        except (subprocess.TimeoutExpired, FileNotFoundError, ValueError):
+            logger.warning("Could not get GPU count via nvidia-smi")
 
     logger.warning("No GPU detected")
     return False
