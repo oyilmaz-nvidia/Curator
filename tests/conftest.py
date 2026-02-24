@@ -22,6 +22,7 @@ import os
 import re
 import socket
 import subprocess
+import time
 from pathlib import Path
 from typing import Any
 
@@ -167,7 +168,7 @@ def pytest_ignore_collect(collection_path: Path, config: pytest.Config) -> bool:
     return False
 
 
-def _build_ray_command(temp_dir: str, num_cpus: int, num_gpus: int, object_store_memory: int) -> tuple[list[str], int]:
+def _build_ray_command(num_cpus: int, num_gpus: int, object_store_memory: int) -> tuple[list[str], int, int]:
     """Build the Ray start command with the given configuration."""
     ray_port = find_free_port()
     dashboard_port = find_free_port()
@@ -186,8 +187,6 @@ def _build_ray_command(temp_dir: str, num_cpus: int, num_gpus: int, object_store
         str(ray_client_server_port),
         "--dashboard-host",
         "0.0.0.0",  # noqa: S104
-        "--temp-dir",
-        str(temp_dir),
         "--num-cpus",
         str(num_cpus),
         "--num-gpus",
@@ -195,11 +194,11 @@ def _build_ray_command(temp_dir: str, num_cpus: int, num_gpus: int, object_store
         "--object-store-memory",
         str(object_store_memory),
         "--block",
-    ], ray_port
+    ], ray_port, ray_client_server_port
 
 
 @pytest.fixture(scope="session", autouse=True)
-def shared_ray_cluster(tmp_path_factory: pytest.TempPathFactory, pytestconfig: pytest.Config) -> str:
+def shared_ray_cluster(pytestconfig: pytest.Config) -> str:
     """Set up a shared Ray cluster with dynamic GPU configuration.
 
     This fixture automatically determines whether GPU resources are needed
@@ -232,11 +231,8 @@ def shared_ray_cluster(tmp_path_factory: pytest.TempPathFactory, pytestconfig: p
 
     logger.info(f"Configuring Ray cluster with {'GPU' if needs_gpu else 'CPU-only'} support")
 
-    # Create a temporary directory for Ray to avoid conflicts with other instances
-    temp_dir = tmp_path_factory.mktemp("ray")
-
     # Build and execute Ray command
-    cmd_to_run, ray_port = _build_ray_command(str(temp_dir), num_cpus, num_gpus, object_store_memory)
+    cmd_to_run, ray_port, ray_client_server_port = _build_ray_command(num_cpus, num_gpus, object_store_memory)
 
     logger.info(f"Starting Ray cluster with {num_gpus} GPUs")
     logger.info(f"Running Ray command: {' '.join(cmd_to_run)}")
@@ -246,11 +242,25 @@ def shared_ray_cluster(tmp_path_factory: pytest.TempPathFactory, pytestconfig: p
     logger.info(f"Started Ray process: {ray_process.pid}")
 
     ray_address = f"localhost:{ray_port}"
+    ray_client_address = f"ray://localhost:{ray_client_server_port}"
     os.environ["RAY_ADDRESS"] = ray_address
     logger.info(f"Set RAY_ADDRESS for tests to: {ray_address}")
 
+    # Wait for the cluster to be ready before yielding
+    deadline = time.time() + 60
+    while time.time() < deadline:
+        result = subprocess.run(  # noqa: S603
+            ["ray", "status", "--address", ray_address],
+            capture_output=True,
+        )
+        if result.returncode == 0:
+            break
+        time.sleep(1)
+    else:
+        raise RuntimeError(f"Ray cluster at {ray_address} did not become ready within 60 seconds")
+
     try:
-        yield ray_address
+        yield ray_client_address
     finally:
         # Ensure cleanup happens even if tests fail
         logger.info("Shutting down Ray cluster")
