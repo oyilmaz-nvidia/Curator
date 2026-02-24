@@ -84,7 +84,7 @@ def get_available_cpu_gpu_resources(
     if ignore_head_node:
         head_node_id = get_head_node_id()
         if head_node_id is not None:
-            total_resources = ray.state.total_resources_per_node().get(head_node_id, {})
+            total_resources = {node["NodeID"]: node["Resources"] for node in ray.nodes()}.get(head_node_id, {})
             head_node_cpus = total_resources.get("CPU", 0)
             head_node_gpus = total_resources.get("GPU", 0)
             logger.info(
