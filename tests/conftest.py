@@ -171,7 +171,9 @@ def pytest_ignore_collect(collection_path: Path, config: pytest.Config) -> bool:
     return False
 
 
-def _build_ray_command(num_cpus: int, num_gpus: int, object_store_memory: int) -> tuple[list[str], int, int]:
+def _build_ray_command(
+    temp_dir: str, num_cpus: int, num_gpus: int, object_store_memory: int
+) -> tuple[list[str], int, int]:
     """Build the Ray start command with the given configuration."""
     ray_port = find_free_port()
     dashboard_port = find_free_port()
@@ -191,6 +193,8 @@ def _build_ray_command(num_cpus: int, num_gpus: int, object_store_memory: int) -
             str(ray_client_server_port),
             "--dashboard-host",
             "0.0.0.0",  # noqa: S104
+            "--temp-dir",
+            str(temp_dir),
             "--num-cpus",
             str(num_cpus),
             "--num-gpus",
@@ -205,7 +209,7 @@ def _build_ray_command(num_cpus: int, num_gpus: int, object_store_memory: int) -
 
 
 @pytest.fixture(scope="session", autouse=True)
-def shared_ray_cluster(pytestconfig: pytest.Config) -> str:
+def shared_ray_cluster(pytestconfig: pytest.Config, tmp_path_factory: pytest.TempPathFactory) -> str:
     """Set up a shared Ray cluster with dynamic GPU configuration.
 
     This fixture automatically determines whether GPU resources are needed
@@ -238,8 +242,13 @@ def shared_ray_cluster(pytestconfig: pytest.Config) -> str:
 
     logger.info(f"Configuring Ray cluster with {'GPU' if needs_gpu else 'CPU-only'} support")
 
+    # Create a temporary directory for Ray to avoid conflicts with other instances
+    temp_dir = tmp_path_factory.mktemp("ray")
+
     # Build and execute Ray command
-    cmd_to_run, ray_port, ray_client_server_port = _build_ray_command(num_cpus, num_gpus, object_store_memory)
+    cmd_to_run, ray_port, ray_client_server_port = _build_ray_command(
+        str(temp_dir), num_cpus, num_gpus, object_store_memory
+    )
 
     logger.info(f"Starting Ray cluster with {num_gpus} GPUs")
     logger.info(f"Running Ray command: {' '.join(cmd_to_run)}")
