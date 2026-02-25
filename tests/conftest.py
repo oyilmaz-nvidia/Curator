@@ -219,12 +219,6 @@ def shared_ray_cluster(pytestconfig: pytest.Config, tmp_path_factory: pytest.Tem
     if "RAY_ADDRESS" in os.environ:
         del os.environ["RAY_ADDRESS"]
 
-    # If RAY_JOB_CONFIG_JSON_ENV_VAR is set (e.g., by `ray job submit` in CI), unset it.
-    # It may contain a working_dir pointing to a local path that is not a valid URI for
-    # Ray Client uploads, causing ConnectionAbortedError when shared_ray_client connects.
-    if "RAY_JOB_CONFIG_JSON_ENV_VAR" in os.environ:
-        del os.environ["RAY_JOB_CONFIG_JSON_ENV_VAR"]
-
     # Get collected items from config (set by pytest_collection_modifyitems)
     collected_items = getattr(pytestconfig, "_collected_items", [])
 
