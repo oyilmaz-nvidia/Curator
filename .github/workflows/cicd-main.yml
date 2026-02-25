@@ -95,7 +95,7 @@ jobs:
           uv sync --link-mode copy --locked --extra audio_cpu --extra sdg_cpu --extra text_cpu --extra video_cpu --group test
           FOLDER="${{ matrix.folder }}"
           FOLDER="${FOLDER/stages-/stages/}"
-          uv run coverage run --branch --source=nemo_curator -m pytest -v "tests/$FOLDER" -m "not gpu"
+          coverage run --branch --source=nemo_curator -m pytest -v "tests/$FOLDER" -m "not gpu"
 
       - name: Generate report
         id: check
