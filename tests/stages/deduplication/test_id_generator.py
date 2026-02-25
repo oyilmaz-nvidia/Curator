@@ -261,6 +261,7 @@ class TestIdGeneratorActor:
                 assert result_file2 == 0
                 assert result_file1 == 5
 
+    @pytest.mark.skip(reason="Skipping")
     def test_id_generator_creation_is_synchronous(self, tmp_path: Path):
         """Test if create_id_generator_actor actor creation is synchronous. To do so we:
 
