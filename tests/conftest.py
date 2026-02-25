@@ -171,6 +171,27 @@ def pytest_ignore_collect(collection_path: Path, config: pytest.Config) -> bool:
     return False
 
 
+def _wait_for_head_node_alive(ray_address: str, timeout: int = 120) -> None:
+    """Wait until the head node registers as ALIVE in GCS.
+
+    In Ray 2.54+, `ray status` succeeds as soon as GCS starts, but the head
+    node may not have registered as ALIVE yet.  ray.init() will fail with
+    "No node info found matching node ids" until that registration completes.
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            ray.init(address=ray_address)
+            ray.shutdown()
+            logger.info("Head node confirmed ALIVE in GCS")
+        except Exception:  # noqa: BLE001, PERF203
+            time.sleep(1)
+        else:
+            return
+    msg = f"Head node at {ray_address} did not become ALIVE in GCS within {timeout} seconds"
+    raise RuntimeError(msg)
+
+
 def _build_ray_command(
     temp_dir: str, num_cpus: int, num_gpus: int, object_store_memory: int
 ) -> tuple[list[str], int, int]:
@@ -253,6 +274,11 @@ def shared_ray_cluster(pytestconfig: pytest.Config, tmp_path_factory: pytest.Tem
     logger.info(f"Starting Ray cluster with {num_gpus} GPUs")
     logger.info(f"Running Ray command: {' '.join(cmd_to_run)}")
 
+    # Ray 2.54+ overrides CUDA_VISIBLE_DEVICES to "" for actors with num_gpus=0 by default.
+    # Xenna manages GPU assignment externally via runtime_env env_vars, so we disable this
+    # behavior. This env var must be set before cluster creation so worker processes inherit it.
+    os.environ["RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO"] = "0"
+
     # Use explicit path to ray command for security
     ray_process = subprocess.Popen(cmd_to_run, shell=False)  # noqa: S603
     logger.info(f"Started Ray process: {ray_process.pid}")
@@ -263,7 +289,7 @@ def shared_ray_cluster(pytestconfig: pytest.Config, tmp_path_factory: pytest.Tem
     logger.info(f"Set RAY_ADDRESS for tests to: {ray_address}")
 
     # Wait for the cluster to be ready before yielding
-    deadline = time.time() + 60
+    deadline = time.time() + 120
     while time.time() < deadline:
         result = subprocess.run(  # noqa: S603
             [shutil.which("ray") or "ray", "status", "--address", ray_address],
@@ -276,6 +302,8 @@ def shared_ray_cluster(pytestconfig: pytest.Config, tmp_path_factory: pytest.Tem
     else:
         msg = f"Ray cluster at {ray_address} did not become ready within 60 seconds"
         raise RuntimeError(msg)
+
+    _wait_for_head_node_alive(ray_address)
 
     try:
         yield ray_client_address
