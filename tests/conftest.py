@@ -20,8 +20,6 @@ GPU resources based on the test session's requirements.
 
 import os
 import re
-import shutil
-import socket
 import subprocess
 import time
 from pathlib import Path
@@ -31,14 +29,9 @@ import pytest
 import ray
 from loguru import logger
 
+from nemo_curator.core.client import RayClient
+
 MODALITY_GROUPS = ["text", "image", "video", "audio"]
-
-
-def find_free_port() -> int:
-    """Find an available port on the system."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("", 0))
-        return s.getsockname()[1]
 
 
 def gpu_available() -> bool:
@@ -190,37 +183,6 @@ def _wait_for_head_node_alive(ray_address: str, timeout: int = 120) -> None:
     raise RuntimeError(msg)
 
 
-def _build_ray_command(temp_dir: str, num_cpus: int, num_gpus: int, object_store_memory: int) -> tuple[list[str], int]:
-    """Build the Ray start command with the given configuration."""
-    ray_port = find_free_port()
-    dashboard_port = find_free_port()
-    ray_client_server_port = find_free_port()
-
-    return [
-        "ray",
-        "start",
-        "--head",
-        "--disable-usage-stats",
-        "--port",
-        str(ray_port),
-        "--dashboard-port",
-        str(dashboard_port),
-        "--ray-client-server-port",
-        str(ray_client_server_port),
-        "--dashboard-host",
-        "0.0.0.0",  # noqa: S104
-        "--temp-dir",
-        str(temp_dir),
-        "--num-cpus",
-        str(num_cpus),
-        "--num-gpus",
-        str(num_gpus),
-        "--object-store-memory",
-        str(object_store_memory),
-        "--block",
-    ], ray_port
-
-
 @pytest.fixture(scope="session", autouse=True)
 def shared_ray_cluster(tmp_path_factory: pytest.TempPathFactory, pytestconfig: pytest.Config) -> str:
     """Set up a shared Ray cluster with dynamic GPU configuration.
@@ -248,56 +210,32 @@ def shared_ray_cluster(tmp_path_factory: pytest.TempPathFactory, pytestconfig: p
         logger.error(error_msg)
         raise RuntimeError(error_msg)
 
-    # Set up Ray configuration values
     num_cpus = 11
     num_gpus = 2 if needs_gpu else 0
     object_store_memory = 2 * (1024**3)  # 2 GB
 
     logger.info(f"Configuring Ray cluster with {'GPU' if needs_gpu else 'CPU-only'} support")
 
-    # Create a temporary directory for Ray to avoid conflicts with other instances
     temp_dir = tmp_path_factory.mktemp("ray")
-
-    # Build and execute Ray command
-    cmd_to_run, ray_port = _build_ray_command(str(temp_dir), num_cpus, num_gpus, object_store_memory)
-
-    logger.info(f"Starting Ray cluster with {num_gpus} GPUs")
-    logger.info(f"Running Ray command: {' '.join(cmd_to_run)}")
-
     os.environ["RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO"] = "0"
 
-    # Use explicit path to ray command for security
-    ray_process = subprocess.Popen(cmd_to_run, shell=False)  # noqa: S603
-    logger.info(f"Started Ray process: {ray_process.pid}")
+    ray_client = RayClient(
+        num_cpus=num_cpus,
+        num_gpus=num_gpus,
+        object_store_memory=object_store_memory,
+        ray_temp_dir=str(temp_dir),
+        include_dashboard=False,
+    )
+    ray_client.start()
 
-    ray_address = f"localhost:{ray_port}"
-    os.environ["RAY_ADDRESS"] = ray_address
-    logger.info(f"Set RAY_ADDRESS for tests to: {ray_address}")
-
-    # Wait for the cluster to be ready before yielding
-    deadline = time.time() + 120
-    while time.time() < deadline:
-        result = subprocess.run(  # noqa: S603
-            [shutil.which("ray") or "ray", "status", "--address", ray_address],
-            capture_output=True,
-            check=False,
-        )
-        if result.returncode == 0:
-            break
-        time.sleep(1)
-    else:
-        msg = f"Ray cluster at {ray_address} did not become ready within 60 seconds"
-        raise RuntimeError(msg)
-
-    _wait_for_head_node_alive(ray_address)
+    ray_address = os.environ["RAY_ADDRESS"]
+    logger.info(f"Ray cluster started at: {ray_address}")
 
     try:
         yield ray_address
     finally:
-        # Ensure cleanup happens even if tests fail
         logger.info("Shutting down Ray cluster")
-        ray_process.kill()
-        ray_process.wait()  # Wait for process to actually terminate
+        ray_client.stop()
 
 
 @pytest.fixture
