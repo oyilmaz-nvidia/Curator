@@ -162,27 +162,6 @@ def pytest_ignore_collect(collection_path: Path, config: pytest.Config) -> bool:
     return False
 
 
-def _wait_for_head_node_alive(ray_address: str, timeout: int = 120) -> None:
-    """Wait until the head node registers as ALIVE in GCS.
-
-    In Ray 2.54+, `ray status` succeeds as soon as GCS starts, but the head
-    node may not have registered as ALIVE yet.  ray.init() will fail with
-    "No node info found matching node ids" until that registration completes.
-    """
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        try:
-            ray.init(address=ray_address)
-            ray.shutdown()
-            logger.info("Head node confirmed ALIVE in GCS")
-        except Exception:  # noqa: BLE001, PERF203
-            time.sleep(1)
-        else:
-            return
-    msg = f"Head node at {ray_address} did not become ALIVE in GCS within {timeout} seconds"
-    raise RuntimeError(msg)
-
-
 @pytest.fixture(scope="session", autouse=True)
 def shared_ray_cluster(tmp_path_factory: pytest.TempPathFactory, pytestconfig: pytest.Config) -> str:
     """Set up a shared Ray cluster with dynamic GPU configuration.
