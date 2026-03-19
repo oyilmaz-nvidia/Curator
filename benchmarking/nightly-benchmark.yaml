@@ -689,7 +689,7 @@ entries:
       - metric: num_output_documents
         exact_value: 61474
 
-  - name: video_embedding
+  - name: video_embedding_xenna
     enabled: true
     script: video_pipeline_benchmark.py
     args: >-
@@ -715,7 +715,33 @@ entries:
       - metric: throughput_clips_per_sec
         min_value: 4.0
 
-  - name: video_transcoding
+  - name: video_embedding_raydata
+    enabled: true
+    script: video_pipeline_benchmark.py
+    args: >-
+      --benchmark-results-path={session_entry_dir}
+      --output-path={session_entry_dir}/scratch/output
+      --executor=ray_data
+      --video-dir={dataset:videos,mp4}
+      --model-dir={dataset:videos_model_weights,files}
+      --video-limit=1000
+    timeout_s: 400
+    sink_data:
+      - name: slack
+        ping_on_failure:
+          - U082G3E46R0  # Abhinav Garg
+    ray:
+      num_cpus: 64
+      num_gpus: 4
+      enable_object_spilling: false
+    requirements:
+      # ensure the total number of documents processed is correct
+      - metric: num_clips_generated
+        exact_value: 1400
+      - metric: throughput_clips_per_sec
+        min_value: 4.0
+
+  - name: video_transcoding_xenna
     enabled: true
     script: video_pipeline_benchmark.py
     args: >-
@@ -741,13 +767,68 @@ entries:
       - metric: throughput_clips_per_sec
         min_value: 5.0
 
-  - name: video_captioning
+  - name: video_transcoding_raydata
+    enabled: true
+    script: video_pipeline_benchmark.py
+    args: >-
+      --benchmark-results-path={session_entry_dir}
+      --output-path={session_entry_dir}/scratch/output
+      --executor=ray_data
+      --no-generate-embeddings
+      --video-dir={dataset:videos,mp4}
+      --video-limit=1000
+    timeout_s: 400
+    sink_data:
+      - name: slack
+        ping_on_failure:
+          - U082G3E46R0  # Abhinav Garg
+    ray:
+      num_cpus: 64
+      num_gpus: 0
+      enable_object_spilling: false
+    requirements:
+      # ensure the total number of documents processed is correct
+      - metric: num_clips_generated
+        exact_value: 1400
+      - metric: throughput_clips_per_sec
+        min_value: 5.0
+
+  - name: video_captioning_xenna
     enabled: true
     script: video_pipeline_benchmark.py
     args: >-
       --benchmark-results-path={session_entry_dir}
       --output-path={session_entry_dir}/scratch/output
       --executor=xenna
+      --video-dir={dataset:videos,mp4}
+      --model-dir={dataset:videos_model_weights,files}
+      --generate-captions
+      --no-generate-embeddings
+      --enhance-captions
+      --video-limit=256
+    timeout_s: 1800
+    sink_data:
+      - name: slack
+        ping_on_failure:
+          - U082G3E46R0  # Abhinav Garg
+    ray:
+      num_cpus: 64
+      num_gpus: 4
+      enable_object_spilling: false
+    requirements:
+      # ensure the total number of documents processed is correct
+      - metric: num_clips_generated
+        exact_value: 377
+      - metric: throughput_clips_per_sec
+        min_value: 0.25
+
+  - name: video_captioning_raydata
+    enabled: true
+    script: video_pipeline_benchmark.py
+    args: >-
+      --benchmark-results-path={session_entry_dir}
+      --output-path={session_entry_dir}/scratch/output
+      --executor=ray_data
       --video-dir={dataset:videos,mp4}
       --model-dir={dataset:videos_model_weights,files}
       --generate-captions
@@ -800,13 +881,43 @@ entries:
       - metric: output_row_count
         exact_value: 853
 
-  - name: video_transnetv2_motion_aesthetic_filter_embeddings
+  - name: video_transnetv2_motion_aesthetic_filter_embeddings_xenna
     enabled: true
     script: video_pipeline_benchmark.py
     args: >-
       --benchmark-results-path={session_entry_dir}
       --output-path={session_entry_dir}/scratch/output
       --executor=xenna
+      --video-dir={dataset:videos,mp4}
+      --model-dir={dataset:videos_model_weights,files}
+      --splitting-algorithm=transnetv2
+      --motion-filter=enable
+      --aesthetic-threshold=3.5
+      --transnetv2-frame-decoder-mode ffmpeg_cpu
+      --video-limit=1000
+    timeout_s: 500
+    sink_data:
+      - name: slack
+        ping_on_failure:
+          - U082G3E46R0  # Abhinav Garg
+    ray:
+      num_cpus: 64
+      num_gpus: 4
+      enable_object_spilling: false
+    requirements:
+      # ensure the total number of documents processed is correct
+      - metric: num_clips_generated
+        exact_value: 113
+      - metric: throughput_clips_per_sec
+        min_value: 0.25
+
+  - name: video_transnetv2_motion_aesthetic_filter_embeddings_raydata
+    enabled: true
+    script: video_pipeline_benchmark.py
+    args: >-
+      --benchmark-results-path={session_entry_dir}
+      --output-path={session_entry_dir}/scratch/output
+      --executor=ray_data
       --video-dir={dataset:videos,mp4}
       --model-dir={dataset:videos_model_weights,files}
       --splitting-algorithm=transnetv2
@@ -916,7 +1027,7 @@ entries:
       - metric: total_filtered_windows
         min_value: 1
 
-  - name: alm_pipeline_ray_data
+  - name: alm_pipeline_raydata
     enabled: true
     script: alm_pipeline_benchmark.py
     args: >-
