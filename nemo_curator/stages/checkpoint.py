@@ -75,8 +75,13 @@ class _CheckpointFilterStage(ProcessingStage[Task, Task]):
     def process(self, task: Task) -> list[Task]:
         source_files: list[str] = task._metadata.get("source_files", [])
         if not source_files:
-            # Can't make a checkpoint decision without source_files — pass through
-            return [task]
+            msg = (
+                f"Checkpointing is enabled but task {task.task_id!r} has no 'source_files' in "
+                "_metadata. The source stage must populate _metadata['source_files'] with the "
+                "originating file paths. Override is_source_stage() to return True and set "
+                "_metadata['source_files'] on every output task."
+            )
+            raise ValueError(msg)
         if self._checkpoint_mgr.is_task_completed(source_files):
             n = self._LOG_TRUNCATE_FILES
             logger.info(
@@ -134,11 +139,11 @@ class _CheckpointRecorderStage(ProcessingStage[Task, Task]):
             )
             self._checkpoint_mgr.mark_completed(task.task_id, source_files)
         else:
-            logger.warning(
-                f"Checkpoint recorder: task {task.task_id!r} has no source_files in "
-                "_metadata — cannot record completion. This task will be re-processed "
-                "on the next resume. If this happens for every task, ensure the source "
-                "stage sets _metadata['source_files'] and BaseStageAdapter propagation "
-                "is running (all stages must go through XennaExecutor/RayActorPoolExecutor)."
+            msg = (
+                f"Checkpointing is enabled but task {task.task_id!r} has no 'source_files' in "
+                "_metadata — cannot record completion. Ensure the source stage sets "
+                "_metadata['source_files'] and that all stages run through a supported executor "
+                "so that BaseStageAdapter propagates source_files to output tasks."
             )
+            raise ValueError(msg)
         return task

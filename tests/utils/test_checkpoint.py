@@ -29,6 +29,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 import ray
 
 from nemo_curator.tasks import FileGroupTask
@@ -306,7 +307,7 @@ class TestCheckpointFilterStage:
         result = stage.process(task)
         assert result == []
 
-    def test_filter_passes_task_with_no_source_files(self, tmp_path: Path):
+    def test_filter_raises_when_no_source_files(self, tmp_path: Path):
         from nemo_curator.stages.checkpoint import _CheckpointFilterStage
 
         ckpt_path = str(tmp_path / "ckpt")
@@ -321,8 +322,8 @@ class TestCheckpointFilterStage:
             data=[],
             _metadata={},  # no source_files
         )
-        result = stage.process(task)
-        assert result == [task]
+        with pytest.raises(ValueError, match="source_files"):
+            stage.process(task)
 
     def test_filter_partial_fanout_not_skipped(self, tmp_path: Path):
         """If only 3 of 5 sub-tasks are complete, the source partition is NOT skipped."""
@@ -386,7 +387,7 @@ class TestCheckpointRecorderStage:
         mgr = CheckpointManager(ckpt_path).load()
         assert mgr.is_task_completed(["z.tar"])
 
-    def test_recorder_no_shard_when_no_source_files(self, tmp_path: Path):
+    def test_recorder_raises_when_no_source_files(self, tmp_path: Path):
         from nemo_curator.stages.checkpoint import _CheckpointRecorderStage
 
         ckpt_path = str(tmp_path / "ckpt")
@@ -401,10 +402,8 @@ class TestCheckpointRecorderStage:
             data=[],
             _metadata={},
         )
-        stage.process(task)
-
-        ckpt_dir = Path(ckpt_path)
-        assert not ckpt_dir.exists() or len(list(ckpt_dir.glob("*.json"))) == 0
+        with pytest.raises(ValueError, match="source_files"):
+            stage.process(task)
 
     def test_recorder_multiple_tasks_writes_multiple_shards(self, tmp_path: Path):
         from nemo_curator.stages.checkpoint import _CheckpointRecorderStage

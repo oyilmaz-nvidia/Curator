@@ -106,7 +106,10 @@ pipeline.run(checkpoint_path="/ckpt")
          → is_task_completed("file_a.tar")? → false → pass through
 
   3. Stage1 … StageN process the task
-       (BaseStageAdapter propagates source_files metadata through each stage)
+       (BaseStageAdapter propagates source_files from task._metadata through each stage —
+        only if the source stage set _metadata["source_files"] to begin with;
+        standard source stages like FilePartitioningStage do this automatically,
+        custom source stages must set it explicitly)
 
   4. If any stage fans out 1 → N:
        BaseStageAdapter._record_checkpoint_events()
