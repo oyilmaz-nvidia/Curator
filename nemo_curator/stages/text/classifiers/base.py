@@ -12,19 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import annotations
-
 import os
 from dataclasses import dataclass
-from functools import lru_cache
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 
 os.environ["RAPIDS_NO_INITIALIZE"] = "1"
 
-# Heavy deps (torch, transformers, numpy, huggingface_hub) are NOT imported at
-# module level.  They are deferred to _make_deberta() / _setup() so that
-# `from nemo_curator.stages.text.classifiers import SomeClassifier` is fast
-# even on cold-start aarch64 (GB200) where these libraries are slow to load.
+import numpy as np
+import pandas as pd
+import torch
+from huggingface_hub import PyTorchModelHubMixin
+from torch import nn
+from transformers import AutoConfig, AutoModel
 
 from nemo_curator.stages.base import CompositeStage, ProcessingStage
 from nemo_curator.stages.text.filters import Filter
@@ -35,60 +34,35 @@ from nemo_curator.tasks import DocumentBatch
 
 from .utils import SortByLengthStage
 
-if TYPE_CHECKING:
-    import numpy as np
-    import pandas as pd
-    import torch
 
+class Deberta(nn.Module, PyTorchModelHubMixin):
+    """
+    Base PyTorch model where we add a classification head.
 
-# ---------------------------------------------------------------------------
-# Lazy factory: defines Deberta (nn.Module subclass) on first call so that
-# torch is never imported at module-parse time.
-# ---------------------------------------------------------------------------
+    Args:
+        config: The configuration of the model.
 
+    """
 
-@lru_cache(maxsize=1)
-def _make_deberta() -> type:
-    import torch
-    from huggingface_hub import PyTorchModelHubMixin
-    from torch import nn
-    from transformers import AutoModel
+    def __init__(self, config: dataclass):
+        super().__init__()
+        self.model = AutoModel.from_pretrained(config["base_model"])
+        self.dropout = nn.Dropout(config["fc_dropout"])
+        self.fc = nn.Linear(self.model.config.hidden_size, len(config["id2label"]))
 
-    class Deberta(nn.Module, PyTorchModelHubMixin):
-        """
-        Base PyTorch model where we add a classification head.
+    @property
+    def device(self) -> torch.device:
+        return next(self.parameters()).device
 
-        Args:
-            config: The configuration of the model.
+    @torch.no_grad()
+    def forward(self, batch: dict[str, torch.Tensor]) -> torch.Tensor:
+        features = self.model(batch[INPUT_ID_FIELD], batch[ATTENTION_MASK_FIELD]).last_hidden_state
+        dropped = self.dropout(features)
+        outputs = self.fc(dropped)
 
-        """
+        del batch, features, dropped
 
-        def __init__(self, config: dataclass):
-            super().__init__()
-            self.model = AutoModel.from_pretrained(config["base_model"])
-            self.dropout = nn.Dropout(config["fc_dropout"])
-            self.fc = nn.Linear(self.model.config.hidden_size, len(config["id2label"]))
-
-        @property
-        def device(self) -> torch.device:
-            return next(self.parameters()).device
-
-        @torch.no_grad()
-        def forward(self, batch: dict[str, torch.Tensor]) -> torch.Tensor:
-            features = self.model(batch[INPUT_ID_FIELD], batch[ATTENTION_MASK_FIELD]).last_hidden_state
-            dropped = self.dropout(features)
-            outputs = self.fc(dropped)
-
-            del batch, features, dropped
-
-            return torch.softmax(outputs[:, 0, :], dim=1)
-
-    return Deberta
-
-
-# ---------------------------------------------------------------------------
-# ClassifierModelStage
-# ---------------------------------------------------------------------------
+        return torch.softmax(outputs[:, 0, :], dim=1)
 
 
 class ClassifierModelStage(ModelStage):
@@ -148,9 +122,6 @@ class ClassifierModelStage(ModelStage):
         return ["data"], [self.label_field] + ([self.score_field] if self.keep_score_field else [])
 
     def _setup(self, local_files_only: bool = True) -> None:
-        from transformers import AutoConfig
-
-        Deberta = _make_deberta()  # noqa: N806
         self.model = (
             Deberta.from_pretrained(self.model_identifier, cache_dir=self.cache_dir, local_files_only=local_files_only)
             .cuda()
@@ -166,8 +137,6 @@ class ClassifierModelStage(ModelStage):
     def process_model_output(
         self, outputs: torch.Tensor, _: dict[str, torch.Tensor] | None = None
     ) -> dict[str, np.ndarray]:
-        import numpy as np
-
         probs = outputs.cpu().numpy()
         preds = np.argmax(probs, axis=1)
 
@@ -188,11 +157,6 @@ class ClassifierModelStage(ModelStage):
             df_cpu[self.score_field] = collected_output[self.score_field].tolist()
 
         return df_cpu
-
-
-# ---------------------------------------------------------------------------
-# DistributedDataClassifier
-# ---------------------------------------------------------------------------
 
 
 @dataclass(kw_only=True)
