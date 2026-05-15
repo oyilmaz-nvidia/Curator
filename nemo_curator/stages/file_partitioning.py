@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import hashlib
 from dataclasses import dataclass
 from typing import Any
 
@@ -97,6 +98,9 @@ class FilePartitioningStage(ProcessingStage[_EmptyTask, FileGroupTask]):
     def outputs(self) -> tuple[list[str], list[str]]:
         return [], []
 
+    def is_source_stage(self) -> bool:
+        return True
+
     def ray_stage_spec(self) -> dict[str, Any]:
         """Ray stage specification for this stage."""
         return {
@@ -104,9 +108,7 @@ class FilePartitioningStage(ProcessingStage[_EmptyTask, FileGroupTask]):
         }
 
     def xenna_stage_spec(self) -> dict[str, Any]:
-        return {
-            "num_workers_per_node": 1,
-        }
+        return {"num_workers_per_node": 1}
 
     def process(self, _: _EmptyTask) -> list[FileGroupTask]:
         """Process the initial task to create file group tasks.
@@ -176,6 +178,11 @@ class FilePartitioningStage(ProcessingStage[_EmptyTask, FileGroupTask]):
                 # https://github.com/NVIDIA-NeMo/Curator/issues/948
                 logger.info(f"Reached limit of {self.limit} file groups")
                 break
+            # Deterministic resumability key: SHA256 of sorted file paths + partition index.
+            # Sorting eliminates filesystem ordering variance; the partition index
+            # discriminates groups that share the same file paths (e.g. sub-file splits).
+            raw_key = "|".join(sorted(file_group)) + "::" + str(i)
+            resumability_key = hashlib.sha256(raw_key.encode()).hexdigest()
             file_task = FileGroupTask(
                 task_id=f"file_group_{i}",
                 dataset_name=dataset_name,
@@ -183,7 +190,9 @@ class FilePartitioningStage(ProcessingStage[_EmptyTask, FileGroupTask]):
                 _metadata={
                     "partition_index": i,
                     "total_partitions": len(partitions),
-                    "source_files": file_group,  # Add source files for deterministic naming during write stage
+                    "source_files": file_group,
+                    "resumability_key": resumability_key,
+                    "resumability_task_key": resumability_key,
                 },
                 reader_config={},  # Empty - will be populated by reader stage
             )

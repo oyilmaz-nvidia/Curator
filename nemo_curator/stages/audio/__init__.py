@@ -24,6 +24,30 @@ and advanced audio processing pipelines.
 """
 
 import importlib as _importlib
+from nemo_curator.stages.audio.advanced_pipelines import AudioDataFilterStage
+from nemo_curator.stages.audio.alm import ALMDataBuilderStage, ALMDataOverlapStage
+from nemo_curator.stages.audio.common import (
+    GetAudioDurationStage,
+    ManifestReader,
+    ManifestWriterStage,
+    PreserveByValueStage,
+)
+from nemo_curator.stages.audio.filtering import (
+    BandFilterStage,
+    SIGMOSFilterStage,
+    UTMOSFilterStage,
+)
+from nemo_curator.stages.audio.postprocessing import (
+    TimestampMapperStage,
+)
+from nemo_curator.stages.audio.preprocessing import (
+    MonoConversionStage,
+    SegmentConcatenationStage,
+)
+from nemo_curator.stages.audio.segmentation import (
+    SpeakerSeparationStage,
+    VADSegmentationStage,
+)
 
 __all__ = [
     "ALMDataBuilderStage",
@@ -34,6 +58,8 @@ __all__ = [
     "FinalizeFieldsStage",
     "GetAudioDurationStage",
     "InitializeFieldsStage",
+    "ManifestReader",
+    "ManifestWriterStage",
     "MonoConversionStage",
     "PreserveByValueStage",
     "RegexSubstitutionStage",

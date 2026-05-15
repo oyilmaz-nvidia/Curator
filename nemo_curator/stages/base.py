@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar, final
 from loguru import logger
 
 from nemo_curator.stages.resources import Resources
-from nemo_curator.tasks import Task
+from nemo_curator.tasks import Task, TransientDrop
 
 if TYPE_CHECKING:
     from nemo_curator.backends.base import NodeInfo, WorkerMetadata
@@ -162,26 +162,34 @@ class ProcessingStage(ABC, Generic[X, Y], metaclass=StageMeta):
         """Process a task and return the result.
         Args:
             task (X): Input task to process
-        Returns (Y | list[Y]):
+        Returns (Y | list[Y] | None | TransientDrop):
             - Single task: For 1-to-1 transformations
             - List of tasks: For 1-to-many transformations (e.g., readers)
-            - None: If the task should be filtered out
+            - ``None``: Permanently filter the task out (marked complete in
+              the checkpoint; resume will NOT retry).
+            - ``TransientDrop``: Drop the task from this run but do NOT
+              mark it complete; resume will retry. Use for transient
+              external failures (server timeout, rate limit, etc.).
         """
 
     def process_batch(self, tasks: list[X]) -> list[Y]:
-        """Process a batch of tasks and return results.
-        Override this method to enable batch processing for your stage.
-        If not overridden, the stage will only support single-task processing.
+        """Process a batch of tasks and return a flat result list.
+
         Args:
             tasks (list[X]): List of input tasks to process
         Returns (list[Y]):
-            List of results, where each result can be:
-            - Single task: For 1-to-1 transformations
-            - List of tasks: For 1-to-many transformations
-            - None: If the task should be filtered out
-        Note: The returned list should have the same length as the input list,
-        with each element corresponding to the result of processing the task
-        at the same index.
+            Flat list of output tasks; may be shorter than the input (drops)
+            or longer (fan-out).
+
+        Resumability:
+            The default implementation calls
+            ``_propagate_resumability_metadata`` per parent so the
+            ``resumability_key`` / ``resumability_task_key`` pair flows
+            through automatically. Stages that override ``process_batch``
+            for vectorized execution bypass this and must invoke
+            ``self._propagate_resumability_metadata(parent, result)``
+            themselves if they need to participate in the checkpoint
+            system.
         """
         # Default implementation: process tasks one by one
         # This is only used as a fallback if a stage doesn't override this method
@@ -192,11 +200,57 @@ class ProcessingStage(ABC, Generic[X, Y], metaclass=StageMeta):
                 raise ValueError(msg)
 
             result = self.process(task)
+            self._propagate_resumability_metadata(task, result)
             if isinstance(result, list):
                 results.extend(result)
-            else:
+            elif result is not None:
                 results.append(result)
         return results
+
+    def _propagate_resumability_metadata(self, task: X, result: Y | list[Y] | None) -> None:
+        """Propagate ``resumability_key`` from a parent task onto its outputs
+        and generate per-child ``resumability_task_key`` paths.
+
+        Called once per parent in the default ``process_batch`` loop. The
+        parent's ``resumability_key`` is copied onto any child that lacks
+        one, each child's ``resumability_task_key`` is rewritten as
+        ``<parent_task_key>::<i>``, and the parent's own
+        ``resumability_task_key`` is stamped on each child as
+        ``parent_resumability_task_key`` so the backend adapter can
+        reconstruct the (parent -> children) grouping from the flat output
+        list for fan-out / drop accounting. Root partitions, whose parent
+        has no ``resumability_task_key`` yet, fall back to the partition key.
+
+        No-op when:
+          - ``result`` is ``None`` (filtered task; no children).
+          - the result group contains a ``TransientDrop`` (transient
+            failure; the leaf will be retried later). The parent is
+            stamped with ``_resumability_transient_drop`` so the adapter
+            does not mistake the empty group for a permanent drop.
+          - the parent has no ``resumability_key`` (checkpoint-off path).
+        """
+        if result is None:
+            return
+        group = result if isinstance(result, list) else [result]
+        if any(isinstance(t, TransientDrop) for t in group):
+            task._metadata["_resumability_transient_drop"] = True
+            return
+        source_key = task._metadata.get("resumability_key", "")
+        if not source_key:
+            if getattr(self, "_checkpoint_path", None) and not getattr(self, "_resumability_strip_warned", False):
+                logger.warning(
+                    f"Stage {self.name!r} produced an output without 'resumability_key' in "
+                    f"_metadata; resumability will not be tracked for downstream stages. "
+                    f"Ensure process()/process_batch preserves task._metadata."
+                )
+                self._resumability_strip_warned = True
+            return
+        parent_task_key = task._metadata.get("resumability_task_key", source_key)
+        for i, child in enumerate(group):
+            if "resumability_key" not in child._metadata:
+                child._metadata["resumability_key"] = source_key
+            child._metadata["resumability_task_key"] = f"{parent_task_key}::{i}"
+            child._metadata["parent_resumability_task_key"] = parent_task_key
 
     def setup_on_node(self, node_info: NodeInfo | None = None, worker_metadata: WorkerMetadata | None = None) -> None:
         """Setup method called once per node in distributed settings.
@@ -226,6 +280,15 @@ class ProcessingStage(ABC, Generic[X, Y], metaclass=StageMeta):
         """
         # Check if process_batch has been overridden
         return type(self).process_batch is not ProcessingStage.process_batch
+
+    def is_source_stage(self) -> bool:
+        """Return True if this stage introduces new source partitions into the pipeline.
+
+        Source stages must populate ``task._metadata["resumability_key"]`` with a
+        stable, unique string per partition so the checkpoint system can track
+        completion across runs.  Override this in stages like FilePartitioningStage.
+        """
+        return False
 
     def __repr__(self) -> str:
         """String representation of the stage."""
