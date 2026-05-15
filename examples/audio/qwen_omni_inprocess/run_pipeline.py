@@ -118,6 +118,10 @@ def _build_arg_parser() -> argparse.ArgumentParser:  # noqa: PLR0915
         "--execution_mode", type=str, default="streaming", choices=["streaming", "batch"], help="Xenna execution mode."
     )
     ap.add_argument(
+        "--checkpoint_path", type=str, default=None,
+        help="Directory for LMDB resumability checkpoints. If set, completed shards are skipped on restart."
+    )
+    ap.add_argument(
         "--autoscale_interval_s", type=int, default=180,
         help="Seconds between Xenna streaming autoscaler checks. Lower values ramp up GPU actors faster on multi-node."
     )
@@ -456,7 +460,7 @@ def main() -> None:  # noqa: C901
     executor = RayDataExecutor()
 
     t0 = time.time()
-    pipeline.run(executor=executor)
+    pipeline.run(executor=executor, checkpoint_path=args.checkpoint_path)
     elapsed = time.time() - t0
     logger.info(f"Pipeline finished in {elapsed / 60:.1f} min. Output: {args.output_dir}")
 

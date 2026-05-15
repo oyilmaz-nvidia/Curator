@@ -126,6 +126,9 @@ class NemoTarShardDiscoveryStage(ProcessingStage[_EmptyTask, FileGroupTask]):
     def xenna_stage_spec(self) -> dict[str, Any]:
         return {"num_workers_per_node": 1}
 
+    def is_source_stage(self) -> bool:
+        return True
+
     def _scan_completed_shards(self) -> set[str]:
         """Scan output_dir recursively for .done marker files and return completed shard keys.
 
@@ -225,6 +228,7 @@ class NemoTarShardDiscoveryStage(ProcessingStage[_EmptyTask, FileGroupTask]):
                             dataset_name=corpus,
                             data=[mp, tp],
                             reader_config={"corpus": corpus, "shard_key": shard_key},
+                            _metadata={"resumability_key": shard_key, "resumability_task_key": shard_key},
                         )
                     )
 
